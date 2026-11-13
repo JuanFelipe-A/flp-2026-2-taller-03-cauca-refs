@@ -228,3 +228,96 @@ end") "num"))
 (eopl:printf "~%==========================================~%")
 (eopl:printf "  pruebas fallidas en total: ~s~%" fallidas)
 (eopl:printf "==========================================~%")
+
+;;; ==========================================================
+;;; Pruebas del grupo: interprete
+;;; ==========================================================
+
+(define ejemplos-almacen
+  (test-suite
+   "Grupo, Parte 1: ejemplos del almacen"
+   (test-case "newref guarda un procedimiento"
+              (check-equal? (corre "let c = newref(proc (x : num) *(x, x) end)
+                                    in apply deref(c) (6) end") 36))
+   (test-case "celda que guarda otra celda"
+              (check-equal? (corre "let interna = newref(3)
+                                    in let externa = newref(interna)
+                                       in begin setref(deref(externa), 30); deref(interna) end
+                                    end end") 30))
+   (test-case "begin con una sola expresion"
+              (check-equal? (corre "begin +(n, m) end") 13))
+   (test-case "el orden del begin se observa en la celda"
+              (check-equal? (corre "let c = newref(1)
+                                    in begin setref(c, *(deref(c), 10));
+                                             setref(c, +(deref(c), 5));
+                                             deref(c) end end") 15))
+   (test-case "swap de una celda consigo misma no cambia nada"
+              (check-equal? (corre "let a = newref(8) in begin swap(a, a); deref(a) end end") 8))
+   (test-case "swap retorna el contenido anterior de la segunda"
+              (check-equal? (corre "let a = newref(true) b = newref(false) in swap(a, b) end") #f))
+   (test-case "alias con let: escribir por un nombre se ve por el otro"
+              (check-equal? (corre "let c = newref(0)
+                                    in let otro = c
+                                       in begin setref(c, 4); setref(otro, +(deref(otro), 1)); deref(c) end
+                                    end end") 5))
+   (test-case "contador dentro de una clausura"
+              (check-equal? (corre "let cuenta = newref(0)
+                                    in let tic = proc () begin setref(cuenta, add1(deref(cuenta))); deref(cuenta) end end
+                                       in begin apply tic (); apply tic (); apply tic () end
+                                    end end") 3))
+   (test-case "letrec que acumula en una celda"
+              (check-equal? (corre "let total = newref(0)
+                                    in letrec num sumar (k : num) =
+                                                if ==(k, 0) then deref(total)
+                                                else begin setref(total, +(deref(total), k)); apply sumar (sub1(k)) end
+                                                end
+                                       in apply sumar (4) end end") 10))
+   (test-case "errores: deref, setref y swap sobre valores que no son referencias"
+              (check-exn exn:fail? (lambda () (corre "deref(true)")))
+              (check-exn exn:fail? (lambda () (corre "let f = proc (x : num) x end in setref(f, 1) end")))
+              (check-exn exn:fail? (lambda () (corre "swap(newref(1), 2)"))))))
+
+(define ejemplos-paso-por-referencia
+  (test-suite
+   "Grupo, Parte 2: paso por referencia"
+   (test-case "applyref para incrementar una variable del que llama"
+              (check-equal? (corre "let x = newref(41)
+                                    in let incr = proc (u : refto(num)) setref(u, add1(deref(u))) end
+                                       in begin applyref incr (x); deref(x) end end end") 42))
+   (test-case "applyref repetido acumula los cambios"
+              (check-equal? (corre "let x = newref(1)
+                                    in let doble = proc (u : refto(num)) setref(u, *(2, deref(u))) end
+                                       in begin applyref doble (x); applyref doble (x); applyref doble (x); deref(x) end
+                                    end end") 8))
+   (test-case "la misma variable en las dos posiciones comparte la celda"
+              (check-equal? (corre "let x = newref(5)
+                                    in let f = proc (u : refto(num), v : refto(num))
+                                                 begin setref(u, 100); deref(v) end
+                                               end
+                                       in applyref f (x, x) end end") 100))
+   (test-case "con apply la misma variable da dos celdas distintas"
+              (check-equal? (corre "let x = newref(5)
+                                    in let f = proc (u : refto(num), v : refto(num))
+                                                 begin setref(u, 100); deref(v) end
+                                               end
+                                       in apply f (x, x) end end") 5))
+   (test-case "applyref no copia la celda que recibe"
+              (check-equal? (corre "let a = newref(1) b = newref(2)
+                                    in let rot = proc (u : refto(num), v : refto(num)) swap(u, v) end
+                                       in begin applyref rot (a, b); applyref rot (a, b); -(deref(a), deref(b)) end
+                                    end end") -1))
+   (test-case "error: aridad incorrecta en applyref"
+              (check-exn exn:fail?
+                         (lambda () (corre "let x = newref(1) y = newref(2)
+                                            in let f = proc (u : refto(num)) deref(u) end
+                                               in applyref f (x, y) end end"))))
+   (test-case "error: identificador no ligado en applyref"
+              (check-exn exn:fail?
+                         (lambda () (corre "let f = proc (u : refto(num)) deref(u) end
+                                            in applyref f (w) end"))))))
+
+(define fallidas-grupo-interprete
+  (+ (run-tests ejemplos-almacen)
+     (run-tests ejemplos-paso-por-referencia)))
+
+(eopl:printf "  pruebas fallidas del grupo (interprete): ~s~%" fallidas-grupo-interprete)
