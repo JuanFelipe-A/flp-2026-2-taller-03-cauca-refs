@@ -10,7 +10,9 @@
   escritas en el cuadro del enunciado.
 
   Los mensajes de error se distinguen uno de otro. Son los nueve del
-  cuadro «Mensajes de error», con ese texto.
+  cuadro «Mensajes de error», con ese texto. Los casos que el cuadro no
+  nombra (case, swap, setref y applyref sobre algo que no es una celda)
+  llevan un mensaje propio.
 
   El módulo requiere sintaxis.rkt y tipos.rkt, y ningún otro módulo del
   intérprete: el árbol que recorre es el que produjo el parser, con las
@@ -50,14 +52,14 @@
   (lambda (tipo-rator tipos-rands)
     (cases tipo tipo-rator
       (proc-tipo (args res)
-        (if (= (length args) (length tipos-rands))
-            (and (verificar-argumentos args tipos-rands 1)
-                 res)
-            (eopl:error 'apply "El procedimiento espera ~a argumentos y recibio ~a"
-                        (length args) (length tipos-rands))))
+                 (if (= (length args) (length tipos-rands))
+                     (and (verificar-argumentos args tipos-rands 1)
+                          res)
+                     (eopl:error 'apply "El procedimiento espera ~a argumentos y recibio ~a"
+                                 (length args) (length tipos-rands))))
       (else
-        (eopl:error 'apply "Se intento aplicar un valor de tipo ~a"
-                    (tipo->texto tipo-rator))))))
+       (eopl:error 'apply "Se intento aplicar un valor de tipo ~a"
+                   (tipo->texto tipo-rator))))))
 
 ;; tipos-de-procs : lista de listas de tipos x lista de tipos -> lista de tipos
 ;; El tipo (t1 * ... -> r) de cada procedimiento de un letrec, a partir
@@ -100,6 +102,40 @@
               (eopl:error 'case "Las ramas del case deben coincidir: ~a vs ~a"
                           (tipo->texto tipo-default) (tipo->texto tipo-rama)))))))
 
+;; contenido-de-ref : tipo x symbol -> tipo
+;; El tipo t de un refto(t). Si no es una referencia, levanta eopl:error
+;; a nombre de quien lo pidió (deref, setref o swap).
+(define contenido-de-ref
+  (lambda (t quien)
+    (cases tipo t
+      (ref-tipo (contenido) contenido)
+      (else
+       (eopl:error quien "~a espera refto(t), se encontro ~a" quien (tipo->texto t))))))
+
+;; type-of-begin : expresion x lista de expresiones x tenv -> tipo
+;; Chequea todas las expresiones en orden y retorna el tipo de la última.
+(define type-of-begin
+  (lambda (exp exps amb)
+    (let ((tipo-exp (type-of exp amb)))
+      (if (null? exps)
+          tipo-exp
+          (type-of-begin (car exps) (cdr exps) amb)))))
+
+;; tipos-de-referencias : lista de symbol x tenv -> lista de tipos
+;; El tipo de cada identificador de un applyref, que debe ser refto(t).
+;; Si alguno no lo es, levanta eopl:error.
+(define tipos-de-referencias
+  (lambda (ids amb)
+    (if (null? ids)
+        '()
+        (let ((tipo-id (apply-tenv amb (car ids))))
+          (cases tipo tipo-id
+            (ref-tipo (contenido)
+                      (cons tipo-id (tipos-de-referencias (cdr ids) amb)))
+            (else
+             (eopl:error 'applyref "applyref exige variables de tipo refto(t): ~a es ~a"
+                         (car ids) (tipo->texto tipo-id))))))))
+
 ;; type-of : expresion x tenv -> tipo
 ;; El tipo de la expresión bajo el ambiente de tipos, o eopl:error con
 ;; el mensaje que explique el conflicto.
@@ -111,41 +147,63 @@
       (true-exp () (bool-tipo))
       (false-exp () (bool-tipo))
       (prim-exp (prim rands)
-        (tipo-de-primitiva prim (tipos-de-rands rands amb)))
+                (tipo-de-primitiva prim (tipos-de-rands rands amb)))
       (if-exp (test true-exp false-exp)
-        (let ((tipo-test (type-of test amb)))
-          (if (tipos-iguales? tipo-test (bool-tipo))
-              (let ((tipo-then (type-of true-exp amb))
-                    (tipo-else (type-of false-exp amb)))
-                (if (tipos-iguales? tipo-then tipo-else)
-                    tipo-then
-                    (eopl:error 'if-exp "Las ramas del if deben coincidir: ~a vs ~a"
-                                (tipo->texto tipo-then) (tipo->texto tipo-else))))
-              (eopl:error 'if-exp "La condicion del if debe ser bool, se encontro ~a"
-                          (tipo->texto tipo-test)))))
+              (let ((tipo-test (type-of test amb)))
+                (if (tipos-iguales? tipo-test (bool-tipo))
+                    (let ((tipo-then (type-of true-exp amb))
+                          (tipo-else (type-of false-exp amb)))
+                      (if (tipos-iguales? tipo-then tipo-else)
+                          tipo-then
+                          (eopl:error 'if-exp "Las ramas del if deben coincidir: ~a vs ~a"
+                                      (tipo->texto tipo-then) (tipo->texto tipo-else))))
+                    (eopl:error 'if-exp "La condicion del if debe ser bool, se encontro ~a"
+                                (tipo->texto tipo-test)))))
       (let-exp (ids rands body)
-        (type-of body (tenv-extendido ids (tipos-de-rands rands amb) amb)))
+               (type-of body (tenv-extendido ids (tipos-de-rands rands amb) amb)))
       (proc-exp (ids tipos body)
-        (proc-tipo tipos (type-of body (tenv-extendido ids tipos amb))))
+                (proc-tipo tipos (type-of body (tenv-extendido ids tipos amb))))
       (app-exp (rator rands)
-        (let ((tipo-rator (type-of rator amb)))
-          (type-of-application tipo-rator (tipos-de-rands rands amb))))
+               (let ((tipo-rator (type-of rator amb)))
+                 (type-of-application tipo-rator (tipos-de-rands rands amb))))
       (letrec-exp (tipos-res proc-names idss tipos-args bodies letrec-body)
-        (let ((amb-rec (tenv-recursivo proc-names
-                                       (tipos-de-procs tipos-args tipos-res)
-                                       amb)))
-          (and (verificar-cuerpos proc-names idss tipos-args tipos-res bodies amb-rec)
-               (type-of letrec-body amb-rec))))
+                  (let ((amb-rec (tenv-recursivo proc-names
+                                                 (tipos-de-procs tipos-args tipos-res)
+                                                 amb)))
+                    (and (verificar-cuerpos proc-names idss tipos-args tipos-res bodies amb-rec)
+                         (type-of letrec-body amb-rec))))
       (case-exp (control valores acciones default)
-        (let ((tipo-control (type-of control amb)))
-          (if (tipos-iguales? tipo-control (num-tipo))
-              (let ((tipo-default (type-of default amb)))
-                (and (verificar-ramas-case tipo-default acciones amb)
-                     tipo-default))
-              (eopl:error 'case "El control del case debe ser num, se encontro ~a"
-                          (tipo->texto tipo-control)))))
-      (else
-        (eopl:error 'type-of "Regla pendiente: referencias (commit 3)")))))
+                (let ((tipo-control (type-of control amb)))
+                  (if (tipos-iguales? tipo-control (num-tipo))
+                      (let ((tipo-default (type-of default amb)))
+                        (and (verificar-ramas-case tipo-default acciones amb)
+                             tipo-default))
+                      (eopl:error 'case "El control del case debe ser num, se encontro ~a"
+                                  (tipo->texto tipo-control)))))
+      (newref-exp (e)
+                  (ref-tipo (type-of e amb)))
+      (deref-exp (e)
+                 (contenido-de-ref (type-of e amb) 'deref))
+      (setref-exp (ref-e val-e)
+                  (let* ((tipo-celda (contenido-de-ref (type-of ref-e amb) 'setref))
+                         (tipo-valor (type-of val-e amb)))
+                    (if (tipos-iguales? tipo-celda tipo-valor)
+                        (num-tipo)
+                        (eopl:error 'setref "La celda guarda ~a y se intento escribir ~a"
+                                    (tipo->texto tipo-celda) (tipo->texto tipo-valor)))))
+      (swap-exp (e1 e2)
+                (let* ((tipo1 (contenido-de-ref (type-of e1 amb) 'swap))
+                       (tipo2 (contenido-de-ref (type-of e2 amb) 'swap)))
+                  (if (tipos-iguales? tipo1 tipo2)
+                      tipo1
+                      (eopl:error 'swap "swap exige celdas del mismo tipo: refto(~a) vs refto(~a)"
+                                  (tipo->texto tipo1) (tipo->texto tipo2)))))
+      (begin-exp (e es)
+                 (type-of-begin e es amb))
+      (app-ref-exp (rator ids)
+                   (let* ((tipo-rator (type-of rator amb))
+                          (tipos-celdas (tipos-de-referencias ids amb)))
+                     (type-of-application tipo-rator tipos-celdas))))))
 
 ;; type-of-program : programa -> tipo
 ;; Chequea el programa en el ambiente de tipos inicial.
@@ -153,7 +211,7 @@
   (lambda (pgm)
     (cases programa pgm
       (a-program (exp)
-        (type-of exp (tenv-inicial))))))
+                 (type-of exp (tenv-inicial))))))
 
 ;; tipo-de-texto : string -> string
 ;; Analiza el texto, lo chequea y describe el tipo resultante.
