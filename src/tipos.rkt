@@ -7,13 +7,13 @@
 
   El datatype tipo lo genera la gramática, porque las anotaciones se
   escriben dentro del programa. Aquí van la comparación estructural de
-  dos tipos, el texto con que un tipo aparece en los mensajes de error y
-  el ambiente de tipos.
+  dos tipos, el texto con que un tipo aparece en los mensajes de error,
+  el ambiente de tipos y lo que cada primitiva exige de sus argumentos.
 
-  Falta el datatype del ambiente de tipos, con las mismas tres variantes
-  del ambiente de valores: tenv-vacio, tenv-extendido y tenv-recursivo.
-  La recursiva guarda el tipo declarado de cada procedimiento, que es lo
-  que permite chequear el cuerpo de un letrec sin evaluarlo.
+  El ambiente de tipos tiene las mismas tres variantes del ambiente de
+  valores: tenv-vacio, tenv-extendido y tenv-recursivo. La recursiva
+  guarda el tipo declarado de cada procedimiento, que es lo que permite
+  chequear el cuerpo de un letrec sin evaluarlo.
 
   El módulo requiere sintaxis.rkt y ningún otro del intérprete.
 |#
@@ -122,21 +122,25 @@
     (tenv-extendido '(n m p q r)
                     (list (num-tipo) (num-tipo) (num-tipo) (num-tipo) (num-tipo))
                     (tenv-vacio))))
-
+;; tipos-exigir-cantidad : lista de tipos x int x symbol -> boolean
+;; #t si llegaron exactamente n argumentos; si no, levanta eopl:error.
 (define tipos-exigir-cantidad
   (lambda (tipos n quien)
     (if (= (length tipos) n)
         #t
         (eopl:error quien "La primitiva espera ~a argumento(s) y recibio ~a"
                     n (length tipos)))))
-
+;; tipos-exigir-minimo : lista de tipos x int x symbol -> boolean
+;; #t si llegaron al menos n argumentos; si no, levanta eopl:error.
 (define tipos-exigir-minimo
   (lambda (tipos n quien)
     (if (>= (length tipos) n)
         #t
         (eopl:error quien "La primitiva espera al menos ~a argumento(s) y recibio ~a"
                     n (length tipos)))))
-
+;; tipos-exigir-todos : lista de tipos x tipo x symbol -> boolean
+;; #t si todos los argumentos tienen el tipo esperado; si no, levanta
+;; eopl:error con el primero que no lo tiene.
 (define tipos-exigir-todos
   (lambda (tipos esperado quien)
     (cond ((null? tipos) #t)
@@ -144,25 +148,29 @@
            (tipos-exigir-todos (cdr tipos) esperado quien))
           (else (eopl:error quien "La primitiva espera argumentos de tipo ~a y recibio ~a"
                             (tipo->texto esperado) (tipo->texto (car tipos)))))))
-
+;; tipo-num-exacto : lista de tipos x int x symbol -> tipo
+;; n argumentos num que retornan num.
 (define tipo-num-exacto
   (lambda (tipos n quien)
     (and (tipos-exigir-cantidad tipos n quien)
          (tipos-exigir-todos tipos (num-tipo) quien)
          (num-tipo))))
-
+;; tipo-num-minimo : lista de tipos x int x symbol -> tipo
+;; Al menos n argumentos num que retornan num.
 (define tipo-num-minimo
   (lambda (tipos n quien)
     (and (tipos-exigir-minimo tipos n quien)
          (tipos-exigir-todos tipos (num-tipo) quien)
          (num-tipo))))
-
+;; tipo-relacional : lista de tipos x int x symbol -> tipo
+;; n argumentos num que retornan bool.
 (define tipo-relacional
   (lambda (tipos n quien)
     (and (tipos-exigir-cantidad tipos n quien)
          (tipos-exigir-todos tipos (num-tipo) quien)
          (bool-tipo))))
-
+;; tipo-booleano : lista de tipos x int x symbol -> tipo
+;; n argumentos bool que retornan bool.
 (define tipo-booleano
   (lambda (tipos n quien)
     (and (tipos-exigir-cantidad tipos n quien)
@@ -197,3 +205,5 @@
       (or-prim () (tipo-booleano tipos 2 'or))
       (xor-prim () (tipo-booleano tipos 2 'xor))
       (implica-prim () (tipo-booleano tipos 2 'implica)))))
+
+(provide (all-defined-out))
