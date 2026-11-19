@@ -321,3 +321,102 @@ end") "num"))
      (run-tests ejemplos-paso-por-referencia)))
 
 (eopl:printf "  pruebas fallidas del grupo (interprete): ~s~%" fallidas-grupo-interprete)
+
+
+;;; ==========================================================
+;;; Pruebas del grupo: chequeador
+;;; ==========================================================
+
+(define ejemplos-bien-tipados
+  (test-suite
+   "Grupo, Parte 3: programas bien tipados"
+   (test-case "if con condicion relacional y ramas num"
+              (check-equal? (tipo-de "if >(n, m) then 1 else 2 end") "num"))
+   (test-case "celda de booleanos"
+              (check-equal? (tipo-de "let a = newref(true) in deref(a) end") "bool"))
+   (test-case "procedimiento sin argumentos"
+              (check-equal? (tipo-de "proc () 5 end") "(-> num)"))
+   (test-case "procedimiento que escribe en una celda recibida"
+              (check-equal? (tipo-de "proc (c : refto(num)) setref(c, 1) end") "(refto(num) -> num)"))
+   (test-case "procedimiento que retorna un procedimiento"
+              (check-equal? (tipo-de "proc (x : num) proc (y : num) +(x, y) end end")
+                            "(num -> (num -> num))"))
+   (test-case "letrec con dos procedimientos que se llaman entre si"
+              (check-equal? (tipo-de "letrec bool par (k : num) =
+                                                if ==(k, 0) then true else apply impar (sub1(k)) end
+                                      bool impar (k : num) =
+                                                if ==(k, 0) then false else apply par (sub1(k)) end
+                                      in apply par (4) end") "bool"))
+   (test-case "swap sobre celdas de booleanos"
+              (check-equal? (tipo-de "let a = newref(true) b = newref(false) in swap(a, b) end") "bool"))
+   (test-case "primitivas booleanas y entre"
+              (check-equal? (tipo-de "xor(entre(n, 1, 20), implica(false, not(<(p, q))))") "bool"))
+   (test-case "saldo corregido: applyref con celdas de num"
+              (check-equal? (tipo-de "let saldo = newref(100)
+in let retirar = proc (cuenta : refto(num), monto : refto(num))
+                   if >=(deref(cuenta), deref(monto))
+                   then setref(cuenta, -(deref(cuenta), deref(monto)))
+                   else 0
+                   end
+                 end
+   in let mq = newref(q)
+      in begin applyref retirar (saldo, mq); deref(saldo) end
+      end
+   end
+end") "num"))))
+
+(define ejemplos-mal-tipados
+  (test-suite
+   "Grupo, Parte 3: un programa por cada mensaje de error"
+   (test-case "if: la condicion es una celda"
+              (check-true (contiene? (mensaje-de "if newref(1) then 1 else 2 end")
+                                     "La condicion del if debe ser bool, se encontro refto(num)")))
+   (test-case "if: ramas de distinto tipo"
+              (check-true (contiene? (mensaje-de "if true then newref(1) else 2 end")
+                                     "Las ramas del if deben coincidir: refto(num) vs num")))
+   (test-case "apply: el operador es un booleano"
+              (check-true (contiene? (mensaje-de "apply true ()")
+                                     "Se intento aplicar un valor de tipo bool")))
+   (test-case "apply: sobran argumentos"
+              (check-true (contiene? (mensaje-de "let f = proc () 1 end in apply f (2, 3) end")
+                                     "El procedimiento espera 0 argumentos y recibio 2")))
+   (test-case "apply: el segundo argumento no tiene el tipo del parametro"
+              (check-true (contiene? (mensaje-de "let f = proc (a : num, b : bool) a end
+                                                  in apply f (1, 2) end")
+                                     "El argumento 2 debe ser bool, se encontro num")))
+   (test-case "deref: el argumento es un booleano"
+              (check-true (contiene? (mensaje-de "deref(true)")
+                                     "deref espera refto(t), se encontro bool")))
+   (test-case "setref: se escribe un num en una celda de bool"
+              (check-true (contiene? (mensaje-de "let c = newref(true) in setref(c, 1) end")
+                                     "La celda guarda bool y se intento escribir num")))
+   (test-case "letrec: el cuerpo no da el resultado declarado"
+              (check-true (contiene? (mensaje-de "letrec bool f (k : num) = k in apply f (1) end")
+                                     "El procedimiento f declara bool y su cuerpo da num")))
+   (test-case "variable fuera del ambiente de tipos"
+              (check-true (contiene? (mensaje-de "+(n, zeta)")
+                                     "Variable no declarada: zeta")))
+   (test-case "case: el control no es num"
+              (check-true (contiene? (mensaje-de "case true of 1 => 1 otherwise => 0 end")
+                                     "El control del case debe ser num, se encontro bool")))
+   (test-case "case: una rama no tiene el tipo de otherwise"
+              (check-true (contiene? (mensaje-de "case n of 1 => 10 otherwise => false end")
+                                     "Las ramas del case deben coincidir: bool vs num")))
+   (test-case "swap: celdas de distinto tipo"
+              (check-true (contiene? (mensaje-de "swap(newref(1), newref(true))")
+                                     "swap exige celdas del mismo tipo: refto(num) vs refto(bool)")))
+   (test-case "setref: el primer argumento no es una celda"
+              (check-true (contiene? (mensaje-de "setref(1, 2)")
+                                     "setref espera refto(t), se encontro num")))
+   (test-case "applyref: la variable q es num y no una celda"
+              (check-true (contiene? (mensaje-de "let saldo = newref(100)
+in let retirar = proc (cuenta : refto(num), monto : num) deref(cuenta) end
+   in applyref retirar (saldo, q) end
+end")
+                                     "applyref exige variables de tipo refto(t): q es num")))))
+
+(define fallidas-grupo-chequeador
+  (+ (run-tests ejemplos-bien-tipados)
+     (run-tests ejemplos-mal-tipados)))
+
+(eopl:printf "  pruebas fallidas del grupo (chequeador): ~s~%" fallidas-grupo-chequeador)
