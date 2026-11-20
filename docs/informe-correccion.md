@@ -336,8 +336,201 @@ la segunda celda.
 
 ### 2.3 Solidez del chequeador (sección 5.3)
 
-{{Repetir la misma estructura.}}
+**Especificación.** El chequeador dice que una expresión tiene tipo
+$t$ sin evaluarla. La solidez es la promesa de que, si lo dice, la
+evaluación no se va a quejar de un tipo. Hay que fijar tres cosas
+antes de enunciarla.
 
+*Concordancia entre ambiente y ambiente de tipos.* Sean $\rho$ un
+ambiente de valores y $\Gamma$ un ambiente de tipos. Decimos
+$\rho \models \Gamma$ si y solo si $\text{dom}(\rho)=\text{dom}(\Gamma)$
+y para todo $x$, $\rho(x)$ es un valor de tipo $\Gamma(x)$. Para un
+procedimiento, «valor de tipo $(t_1 \ast\cdots\ast t_n \to t)$» significa
+una clausura que, aplicada a valores de tipo $t_i$, da un valor de tipo
+$t$; en concreto, una clausura $\langle x_1,\ldots,x_n;\, b;\, \rho_c\rangle$
+con $\rho_c \models \Gamma_c$ y
+$\Gamma_c[x_i \mapsto t_i] \vdash b : t$ para algún $\Gamma_c$.
+
+*Tipado del almacén.* Un valor de tipo $\text{refto}(t)$ es solo una
+posición $\ell$. Que $\ell$ «sea de tipo $\text{refto}(t)$» depende de lo
+que hay en el almacén, y el almacén cambia durante la ejecución. Por eso
+se introduce un tipado del almacén $\Sigma$, una función de posiciones a
+tipos, con
+
+$$
+v : t \;[\Sigma] \;\text{ para }\; v=\ell \text{ si y solo si } t = \text{refto}(t') \text{ y } \Sigma(\ell)=t',
+$$
+
+y para números, booleanos y clausuras como arriba, usando $\Sigma$ en el
+tipado de los valores que la clausura guarda en $\rho_c$. Un almacén
+$\sigma$ concuerda con $\Sigma$, escrito $\sigma \models \Sigma$, si
+$\text{dom}(\sigma)=\text{dom}(\Sigma)$ y para todo $\ell$,
+$\sigma(\ell) : \Sigma(\ell)\;[\Sigma]$. Decimos que $\Sigma'$ *extiende*
+a $\Sigma$ si $\text{dom}(\Sigma)\subseteq\text{dom}(\Sigma')$ y
+$\Sigma'(\ell)=\Sigma(\ell)$ para todo $\ell\in\text{dom}(\Sigma)$.
+
+*Enunciado.* Si $\Gamma \vdash e : t$, $\rho \models_\Sigma \Gamma$ y
+$\sigma \models \Sigma$, entonces `evaluar-expresion`$(e, \rho)$ con
+almacén $\sigma$ cumple una de estas tres cosas:
+
+1. no termina;
+2. levanta un error aritmético, que es de valores y no de tipos: división
+   por cero, o `mcd` o `mcm` con un número que no es entero (el tipo
+   $\text{num}$ no distingue enteros de decimales);
+3. retorna un valor $v$ y deja un almacén $\sigma'$ tales que existe un
+   $\Sigma'$ que extiende a $\Sigma$ con $\sigma' \models \Sigma'$ y
+   $v : t\;[\Sigma']$.
+
+En particular, nunca se levanta ninguno de los otros errores del
+evaluador: condición del `if` no booleana, aplicación de algo que no es
+un procedimiento, aridad incorrecta, argumento primitivo del tipo
+equivocado, `deref`, `setref`, `swap` o `applyref` sobre algo que no es
+una referencia, control del `case` que no es número, variable sin ligar
+o referencia fuera de rango.
+
+**Código** (las dos reglas que usa la demostración, en
+`src/chequeador.rkt`):
+
+```racket
+(if-exp (test true-exp false-exp)
+  (let ((tipo-test (type-of test amb)))
+    (if (tipos-iguales? tipo-test (bool-tipo))
+        (let ((tipo-then (type-of true-exp amb))
+              (tipo-else (type-of false-exp amb)))
+          (if (tipos-iguales? tipo-then tipo-else)
+              tipo-then
+              (eopl:error 'if-exp "Las ramas del if deben coincidir: ~a vs ~a"
+                          (tipo->texto tipo-then) (tipo->texto tipo-else))))
+        (eopl:error 'if-exp "La condicion del if debe ser bool, se encontro ~a"
+                    (tipo->texto tipo-test)))))
+
+(setref-exp (ref-e val-e)
+  (let* ((tipo-celda (contenido-de-ref (type-of ref-e amb) 'setref))
+         (tipo-valor (type-of val-e amb)))
+    (if (tipos-iguales? tipo-celda tipo-valor)
+        (num-tipo)
+        (eopl:error 'setref "La celda guarda ~a y se intento escribir ~a"
+                    (tipo->texto tipo-celda) (tipo->texto tipo-valor)))))
+```
+
+**Estrategia de demostración:** inducción sobre la derivación de
+$\Gamma \vdash e : t$, con una regla por variante de `expresion`. Se
+usa el lema siguiente.
+
+*Lema (debilitamiento).* Si $v : t\;[\Sigma]$ y $\Sigma'$ extiende a
+$\Sigma$, entonces $v : t\;[\Sigma']$; y si $\rho \models_\Sigma \Gamma$,
+entonces $\rho \models_{\Sigma'} \Gamma$. *Prueba:* por casos sobre $v$.
+Para un número o un booleano no interviene $\Sigma$. Para una posición
+$\ell$, $\Sigma'(\ell)=\Sigma(\ell)$ porque $\Sigma'$ extiende a $\Sigma$.
+Para una clausura, se aplica lo mismo al ambiente $\rho_c$ que guarda.
+$\square$
+
+**Demostración.** Cada caso usa la hipótesis de inducción (HI) sobre
+las subderivaciones y el lema para llevar lo ya calculado al almacén más
+grande.
+
+- **Caso `lit-exp`, `true-exp` y `false-exp`.** La regla da $\text{num}$
+  o $\text{bool}$ y el evaluador retorna un número o un booleano. No
+  toca el almacén, así que $\Sigma'=\Sigma$.
+
+- **Caso `var-exp`.** La regla da $\Gamma(x)$. Como
+  $\rho\models\Gamma$, $x$ está ligada y $\rho(x)$ es un valor de tipo
+  $\Gamma(x)$. Si $x$ es un procedimiento de un `letrec`,
+  `apply-env` arma la clausura sobre el ambiente recursivo completo;
+  su tipo es el declarado por la regla de `letrec` (ver ese caso).
+
+- **Caso `prim-exp`.** Por HI, cada argumento da un valor de su tipo, y
+  `tipo-de-primitiva` exige exactamente lo que exige `evaluar-primitiva`:
+  la misma aridad y el mismo tipo de argumentos. Los chequeos de
+  `primitivas.rkt` (`exigir-numeros`, `exigir-booleanos`,
+  `exigir-cantidad`, `exigir-minimo`) no se cumplen solo si el tipo está
+  mal, así que no fallan. Quedan solo `dividir` con divisor cero y
+  `exigir-enteros` en `mcd` y `mcm`, que son los errores de la alternativa
+  2 del enunciado. El resultado es de tipo $\text{num}$ o $\text{bool}$,
+  según la tabla de `tipo-de-primitiva`.
+
+- **Caso `if-exp`.** Por HI sobre la condición, el valor es de tipo
+  $\text{bool}$, así que `boolean?` se cumple y el `eopl:error` de
+  «condición no booleana» nunca ocurre. Se evalúa solo una de las dos
+  ramas. Cualquiera de las dos da un valor de tipo $t$, porque la regla
+  exige que las dos ramas tengan el mismo tipo $t$ (si no, el chequeador
+  levanta «Las ramas del if deben coincidir»), y por HI el valor de la
+  rama elegida es de tipo $t$ con un $\Sigma'$ que extiende a $\Sigma$.
+
+- **Caso `let-exp`.** Por HI, cada expresión de la lista se evalúa en
+  $\rho$ (el ambiente de afuera, igual que en la regla) y da un valor
+  $v_i : t_i$; los almacenes sucesivos concuerdan con extensiones
+  sucesivas de $\Sigma$ y el lema lleva los $v_i$ a la última. Entonces
+  $\rho[x_i\mapsto v_i] \models \Gamma[x_i\mapsto t_i]$ y la HI sobre el
+  cuerpo da el resultado de tipo $t$.
+
+- **Caso `proc-exp`.** El evaluador crea la clausura
+  $\langle x_i;\, b;\, \rho\rangle$ sin evaluar el cuerpo. La regla da
+  $(t_1\ast\cdots\ast t_n\to t)$ con $\Gamma[x_i\mapsto t_i]\vdash b:t$
+  y $\rho\models\Gamma$: es exactamente la definición de «valor de tipo
+  $(t_1\ast\cdots\ast t_n\to t)$».
+
+- **Caso `app-exp`.**
+  - Por HI, el operador es una clausura de tipo
+    $(t_1\ast\cdots\ast t_n\to t)$, de modo que `procval?` se cumple, y
+    cada argumento es un valor de tipo $t_i$. La regla además garantiza
+    la aridad ($n$ parámetros y $n$ argumentos), de modo que el error de
+    `apply-procedure` nunca ocurre.
+  - `copia-por-valor` no cambia los tipos: para un número, un booleano o
+    una clausura es el mismo valor, y para una posición $\ell$ crea una
+    celda nueva $\ell'$ con el mismo contenido, así que
+    $\Sigma'=\Sigma[\ell'\mapsto\Sigma(\ell)]$ extiende a $\Sigma$ y
+    $\ell' : \text{refto}(\Sigma(\ell))\;[\Sigma']$.
+  - El cuerpo se evalúa en $\rho'=\rho_c[x_i\mapsto v_i]$, que concuerda
+    con $\Gamma_c[x_i\mapsto t_i]$.
+  - Por HI sobre la derivación del cuerpo, el resultado es de tipo $t$.
+
+- **Caso `letrec-exp`.** Sea $\Gamma'$ el ambiente recursivo que arma la
+  regla, con el tipo $(t_1\ast\cdots\to r)$ declarado de cada
+  procedimiento, y sea $\rho'$ el `ambiente-recursivo` que arma el
+  evaluador sobre $\rho$. La regla verifica cada cuerpo en $\Gamma'$ extendido
+  con sus parámetros y compara con el resultado declarado, de modo que
+  la clausura que `apply-env` entrega para cada nombre es de su tipo
+  declarado. Así $\rho'\models\Gamma'$ y la HI sobre el cuerpo del
+  `letrec` da el resultado. No hay un círculo en el argumento: el tipo de
+  cada procedimiento viene escrito en el programa y la regla lo usa como
+  hipótesis para chequear los cuerpos, no lo calcula a partir de ellos.
+
+- **Caso `case-exp`.** Por HI, el control es de tipo $\text{num}$, así
+  que `number?` se cumple. Se evalúa una sola rama, y todas, también la
+  de `otherwise`, tienen el mismo tipo $t$.
+
+  - **Casos con referencias.**
+  - **`newref-exp`.** Por HI, $v:t\;[\Sigma_1]$. `newref!` agrega una
+    celda en $\ell=|\sigma|$, así que $\ell\notin\text{dom}(\Sigma_1)$.
+    Con $\Sigma'=\Sigma_1[\ell\mapsto t]$, $\sigma'\models\Sigma'$ y
+    $\ell:\text{refto}(t)\;[\Sigma']$.
+  - **`deref-exp`.** Por HI, el valor es una posición $\ell$ con
+    $\Sigma(\ell)=t$. Como $\text{dom}(\sigma)=\text{dom}(\Sigma)$,
+    $\ell$ está en rango y el error de `deref` por rango nunca ocurre.
+    Por $\sigma\models\Sigma$, $\sigma(\ell):t$.
+  - **`setref-exp`.** Por HI, $\ell:\text{refto}(t)$ y el valor $v:t'$,
+    y la regla exige $t=t'$ («La celda guarda $t$ y se intento escribir
+    $t'$» si no). Entonces $\sigma'=\sigma[\ell\mapsto v]$ cumple
+    $\sigma'\models\Sigma$: la celda $\ell$ tiene ahora un valor de
+    tipo $\Sigma(\ell)$ y las demás no cambian. El valor retornado es
+    $1$, de tipo $\text{num}$, que es lo que da la regla.
+  - **`swap-exp`.** Por HI, $\ell_1:\text{refto}(t)$ y
+    $\ell_2:\text{refto}(t)$ con el mismo $t$, porque la regla lo exige.
+    Ambos contenidos son de tipo $t$, así que escribir cada uno en la
+    celda del otro conserva $\sigma'\models\Sigma$, también cuando
+    $\ell_1=\ell_2$ (el almacén no cambia). El valor retornado es
+    $\sigma(\ell_2):t$.
+  - **`begin-exp`.** Por HI sobre cada expresión en orden, con el lema
+    para pasar de un almacén al siguiente; el resultado es el de la
+    última, de tipo $t$.
+  - **`app-ref-exp`.** La regla busca el tipo de cada identificador con
+    `apply-tenv` y exige que sea $\text{refto}(t_i)$; por
+    $\rho\models\Gamma$, $\rho(x_i)=\ell_i$ con $\Sigma(\ell_i)=t_i$, de
+    modo que `buscar-referencias` no falla. El operador es una
+    clausura de tipo $(\text{refto}(t_1)\ast\cdots\to t)$ y no se copia
+    nada: el cuerpo se evalúa en
+    
 ---
 
 ## 3. Propiedades adicionales
